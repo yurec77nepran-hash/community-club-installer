@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+
+PROJECT_ROOT="$(cd "$TESTS_ROOT/.." && pwd)"
+readonly PROJECT_ROOT
+readonly INSTALLER="$PROJECT_ROOT/scripts/club"
+readonly EXPECTED_REPOSITORY="https://github.com/yurec77nepran-hash/community-club-source.git"
+readonly EXPECTED_COMMIT="1ac31045e815d5b12569b34cbeaf53b97a7e81d0"
+readonly INSTALLER_MARKER="community-club-installer-v1"
+readonly VALID_DOMAIN="club.example.com"
+readonly VALID_ADMIN_EMAIL="admin@example.com"
+BASH_BIN="$(command -v bash)"
+readonly BASH_BIN
+
+TEST_ROOT=""
+FAKE_BIN=""
+TARGET_DIR=""
+COMMAND_LOG=""
+BOOTSTRAP_LOG=""
+OS_RELEASE=""
+LOCK_FILE=""
+INSTALLER_OUTPUT=""
+INSTALLER_STATUS=0
+
+setup() {
+  unset CLUB_TEST_EUID INSTALL_EMAIL REPOSITORY_URL COMMIT_SHA
+  unset CLUB_REPOSITORY_URL CLUB_COMMIT_SHA ADMIN_PASSWORD COMPOSE_FILE
+  unset DOCKER_HOST BASH_ENV ENV CDPATH GIT_DIR GIT_WORK_TREE
+
+  TEST_ROOT="$(mktemp -d)"
+  FAKE_BIN="$TEST_ROOT/bin"
+  TARGET_DIR="$TEST_ROOT/community-club"
+  COMMAND_LOG="$TEST_ROOT/commands.log"
+  BOOTSTRAP_LOG="$TEST_ROOT/bootstrap.log"
+  OS_RELEASE="$TEST_ROOT/os-release"
+  LOCK_FILE="$TEST_ROOT/community-club-installer.lock"
+
+  mkdir -p "$FAKE_BIN" "$TARGET_DIR"
+  : >"$COMMAND_LOG"
+  write_supported_os_release
+  write_command_doubles
+}
+
+teardown() {
+  rm -rf "$TEST_ROOT"
+}
+
+write_supported_os_release() {
+  cat >"$OS_RELEASE" <<'EOF'
+ID=ubuntu
+VERSION_ID="24.04"
+EOF
+}
+
+write_command_doubles() {
+  cat >"$FAKE_BIN/git" <<'EOF'
+#!/usr/bin/env bash
+set -u
+root="$(cd "$(dirname "$0")/.." && pwd)"
+printf 'git|' >>"$root/commands.log"
+printf '%q ' "$@" >>"$root/commands.log"
+printf '\n' >>"$root/commands.log"
+
+checkout=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == '-C' ]]; then
+    checkout="$argument"
+    break
+  fi
+  previous="$argument"
+done
+
+if [[ " $* " == *" init "* ]]; then
+  mkdir -p "$checkout/.git"
+elif [[ " $* " == *" checkout "* ]]; then
+  mkdir -p "$checkout/scripts" "$checkout/secrets"
+  cp "$root/server-bootstrap.sh" "$checkout/scripts/server-bootstrap.sh"
+  chmod +x "$checkout/scripts/server-bootstrap.sh"
+  printf 'staged-env\n' >"$checkout/.env"
+  printf 'staged-garage\n' >"$checkout/garage.toml"
+  printf 'staged-secret\n' >"$checkout/secrets/staged-key"
+  printf 'untrusted-staged-marker\n' >"$checkout/.community-club-installer"
+  if [[ -f "$root/unsafe-bootstrap-mode" ]]; then
+    chmod 0777 "$checkout/scripts/server-bootstrap.sh"
+  fi
+  if [[ -f "$root/unsafe-bootstrap-owner" ]]; then
+    /bin/chown 65534 "$checkout/scripts/server-bootstrap.sh"
+  fi
+elif [[ " $* " == *" rev-parse "*" HEAD "* ]]; then
+  if [[ -f "$root/fake-head" ]]; then
+    cat "$root/fake-head"
+  else
+    printf '%s\n' '1ac31045e815d5b12569b34cbeaf53b97a7e81d0'
+  fi
+fi
+EOF
+
+  cat >"$FAKE_BIN/cp" <<'EOF'
+#!/usr/bin/env bash
+set -u
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -f "$root/fail-source-copy" && "${2:-}" == */source/. ]]; then
+  exit 73
+fi
+exec /bin/cp "$@"
+EOF
+
+  for command_name in apt-get docker systemctl chown; do
+    cat >"$FAKE_BIN/$command_name" <<'EOF'
+#!/usr/bin/env bash
+set -u
+root="$(cd "$(dirname "$0")/.." && pwd)"
+printf '%s|' "${0##*/}" >>"$root/commands.log"
+printf '%q ' "$@" >>"$root/commands.log"
+printf '\n' >>"$root/commands.log"
+exit 0
+EOF
+  done
+
+  chmod +x "$FAKE_BIN"/*
+}
+
+write_bootstrap_double() {
+  local exit_code="${1:-0}"
+
+  cat >"$TEST_ROOT/server-bootstrap.sh" <<EOF
+#!/usr/bin/env bash
+set -u
+env | sort >"$BOOTSTRAP_LOG"
+printf 'argc=%s\n' "\$#" >>"$BOOTSTRAP_LOG"
+if flock -n "$LOCK_FILE" true; then
+  printf 'installer_lock=free\n' >>"$BOOTSTRAP_LOG"
+else
+  printf 'installer_lock=held\n' >>"$BOOTSTRAP_LOG"
+fi
+exit $exit_code
+EOF
+  chmod +x "$TEST_ROOT/server-bootstrap.sh"
+}
+
+mark_existing_target() {
+  printf '%s\n' "$INSTALLER_MARKER" >"$TARGET_DIR/.community-club-installer"
+  chmod 0600 "$TARGET_DIR/.community-club-installer"
+}
+
+set_fake_head() {
+  printf '%s\n' "$1" >"$TEST_ROOT/fake-head"
+}
+
+invoke_installer() {
+  local domain="$1"
+  local admin_email="$2"
+
+  set +e
+  INSTALLER_OUTPUT="$({
+    if [[ "$domain" == "__UNSET__" ]]; then
+      unset DOMAIN
+    else
+      export DOMAIN="$domain"
+    fi
+    if [[ "$admin_email" == "__UNSET__" ]]; then
+      unset ADMIN_EMAIL
+    else
+      export ADMIN_EMAIL="$admin_email"
+    fi
+
+    export PATH="$FAKE_BIN:/usr/bin:/bin"
+    export CLUB_INSTALLER_TEST_MODE=1
+    export CLUB_INSTALLER_TEST_OS_RELEASE="$OS_RELEASE"
+    export CLUB_INSTALLER_TEST_EUID="${CLUB_TEST_EUID:-0}"
+    export CLUB_INSTALLER_TEST_TARGET_DIR="$TARGET_DIR"
+    export CLUB_INSTALLER_TEST_LOCK_FILE="$LOCK_FILE"
+    "$BASH_BIN" "$INSTALLER"
+  } 2>&1)"
+  INSTALLER_STATUS=$?
+}
+
+assert_success() {
+  [[ "$INSTALLER_STATUS" -eq 0 ]] || {
+    printf 'expected exit 0, got %s; output: %s\n' "$INSTALLER_STATUS" "$INSTALLER_OUTPUT" >&2
+    return 1
+  }
+}
+
+assert_failure() {
+  [[ "$INSTALLER_STATUS" -ne 0 ]] || {
+    printf 'expected a non-zero exit; output: %s\n' "$INSTALLER_OUTPUT" >&2
+    return 1
+  }
+}
+
+assert_status() {
+  local expected="$1"
+  [[ "$INSTALLER_STATUS" -eq "$expected" ]] || {
+    printf 'expected exit %s, got %s; output: %s\n' "$expected" "$INSTALLER_STATUS" "$INSTALLER_OUTPUT" >&2
+    return 1
+  }
+}
+
+assert_file_empty() {
+  local path="$1"
+  [[ ! -s "$path" ]] || {
+    printf 'expected %s to be empty\n' "$path" >&2
+    return 1
+  }
+}
+
+assert_file_contains() {
+  local path="$1"
+  local expected="$2"
+  if [[ ! -f "$path" ]] || ! grep -Fq -- "$expected" "$path"; then
+    printf 'expected %s to contain: %s\n' "$path" "$expected" >&2
+    return 1
+  fi
+}
+
+assert_file_excludes() {
+  local path="$1"
+  local unexpected="$2"
+  if [[ -f "$path" ]] && grep -Fq -- "$unexpected" "$path"; then
+    printf 'expected %s not to contain: %s\n' "$path" "$unexpected" >&2
+    return 1
+  fi
+}
+
+run_test() {
+  local name="$1"
+  local test_function="$2"
+  local status=0
+
+  setup
+  "$test_function" || status=$?
+  teardown
+
+  if [[ "$status" -eq 0 ]]; then
+    printf 'ok - %s\n' "$name"
+  else
+    printf 'not ok - %s\n' "$name"
+  fi
+  return "$status"
+}
+
+run_all_tests() {
+  local failures=0
+  local test_case name test_function
+
+  for test_case in "${TESTS[@]}"; do
+    IFS='|' read -r name test_function <<<"$test_case"
+    run_test "$name" "$test_function" || failures=$((failures + 1))
+  done
+
+  printf '\n%s tests, %s failures\n' "${#TESTS[@]}" "$failures"
+  [[ "$failures" -eq 0 ]]
+}

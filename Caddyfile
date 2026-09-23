@@ -1,0 +1,22 @@
+{
+	admin off
+	persist_config off
+}
+
+:8080 {
+	handle /club {
+		header Content-Type "text/plain; charset=utf-8"
+		header X-Content-Type-Options "nosniff"
+		root * /srv
+		file_server
+	}
+
+	handle /health {
+		header Content-Type "application/json; charset=utf-8"
+		respond "{\"service\":\"community-club-installer\",\"commit\":\"1ac31045e815d5b12569b34cbeaf53b97a7e81d0\"}" 200
+	}
+
+	handle {
+		respond 404
+	}
+}

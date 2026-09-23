@@ -1,0 +1,22 @@
+services:
+  community-club-installer:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-3980}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --quiet --spider http://127.0.0.1:8080/health
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 5s

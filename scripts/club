@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly REPOSITORY='https://github.com/yurec77nepran-hash/community-club-source.git'
+readonly COMMIT='1ac31045e815d5b12569b34cbeaf53b97a7e81d0'
+readonly MARKER_VALUE='community-club-installer-v1'
+readonly PRODUCTION_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+readonly TEST_MODE="${CLUB_INSTALLER_TEST_MODE:-0}"
+readonly DOMAIN="${DOMAIN:-}"
+readonly ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+
+if [[ "$TEST_MODE" == '1' ]]; then
+  readonly TARGET_DIR="${CLUB_INSTALLER_TEST_TARGET_DIR:-/opt/community-club}"
+  readonly OS_RELEASE="${CLUB_INSTALLER_TEST_OS_RELEASE:-/etc/os-release}"
+  readonly EFFECTIVE_EUID="${CLUB_INSTALLER_TEST_EUID:-$EUID}"
+  readonly LOCK_FILE="${CLUB_INSTALLER_TEST_LOCK_FILE:-/run/lock/community-club-installer.lock}"
+  readonly EXEC_PATH="$PATH"
+else
+  readonly TARGET_DIR='/opt/community-club'
+  readonly OS_RELEASE='/etc/os-release'
+  readonly EFFECTIVE_EUID="$EUID"
+  readonly LOCK_FILE='/run/lock/community-club-installer/installer.lock'
+  readonly EXEC_PATH="$PRODUCTION_PATH"
+fi
+
+WORK_DIR=''
+INSTALL_LOCK_FD=''
+
+die() {
+  printf 'Community Club installer: %s\n' "$1" >&2
+  exit 1
+}
+
+is_domain() {
+  local domain="$1"
+  local label
+  local -a labels
+
+  [[ ${#domain} -le 253 && "$domain" == *.* ]] || return 1
+  IFS='.' read -r -a labels <<<"$domain"
+  for label in "${labels[@]}"; do
+    [[ ${#label} -le 63 && "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+  done
+}
+
+validate_inputs() {
+  local email_domain
+
+  [[ -n "$DOMAIN" ]] || die 'DOMAIN is required'
+  is_domain "$DOMAIN" || die 'DOMAIN must be a valid DNS hostname'
+  [[ "$ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] ||
+    die 'ADMIN_EMAIL must be a valid email address'
+  email_domain="${ADMIN_EMAIL##*@}"
+  is_domain "$email_domain" || die 'ADMIN_EMAIL must contain a valid mailbox domain'
+}
+
+os_value() {
+  local wanted="$1"
+  local key value
+
+  while IFS='=' read -r key value; do
+    if [[ "$key" == "$wanted" ]]; then
+      value="${value#\"}"
+      value="${value%\"}"
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done <"$OS_RELEASE"
+  return 1
+}
+
+validate_host() {
+  local os_id os_like
+
+  [[ "$EFFECTIVE_EUID" -eq 0 ]] || die 'installer must be run as root'
+  [[ -r "$OS_RELEASE" ]] || die 'cannot read host OS information'
+  os_id="$(os_value ID || true)"
+  os_like="$(os_value ID_LIKE || true)"
+  if [[ "$os_id" != 'ubuntu' && "$os_id" != 'debian' &&
+    ! " $os_like " =~ [[:space:]](ubuntu|debian)[[:space:]] ]]; then
+    die 'only Ubuntu and Debian-like systems are supported'
+  fi
+}
+
+target_is_empty() {
+  local -a entries
+
+  shopt -s nullglob dotglob
+  entries=("$TARGET_DIR"/*)
+  shopt -u nullglob dotglob
+  ((${#entries[@]} == 0))
+}
+
+is_root_safe() {
+  local path="$1"
+  local permissions
+
+  [[ ! -L "$path" && -e "$path" && "$(stat -c %u "$path")" == '0' ]] || return 1
+  permissions="$(stat -c %A "$path")"
+  [[ "${permissions:5:1}" != 'w' && "${permissions:8:1}" != 'w' ]]
+}
+
+validate_target() {
+  local marker="$TARGET_DIR/.community-club-installer"
+  local artifact
+
+  [[ ! -L "$TARGET_DIR" ]] || die "target must not be a symlink: $TARGET_DIR"
+  [[ -e "$TARGET_DIR" ]] || return
+  [[ -d "$TARGET_DIR" ]] || die "target is not a directory: $TARGET_DIR"
+  is_root_safe "$TARGET_DIR" || die 'target must be root-owned without group/world write access'
+  target_is_empty && return
+  [[ ! -L "$marker" && -f "$marker" && "$(stat -c '%u:%a' "$marker")" == '0:600' &&
+    "$(<"$marker")" == "$MARKER_VALUE" ]] ||
+    die "refusing non-empty target without installer marker: $TARGET_DIR"
+
+  for artifact in .env secrets garage.toml; do
+    [[ ! -L "$TARGET_DIR/$artifact" ]] || die "runtime artifact must not be a symlink: $artifact"
+  done
+  [[ ! -e "$TARGET_DIR/.env" || -f "$TARGET_DIR/.env" ]] || die '.env must be a regular file'
+  [[ ! -e "$TARGET_DIR/garage.toml" || -f "$TARGET_DIR/garage.toml" ]] ||
+    die 'garage.toml must be a regular file'
+  [[ ! -e "$TARGET_DIR/secrets" || -d "$TARGET_DIR/secrets" ]] || die 'secrets must be a directory'
+  if [[ -d "$TARGET_DIR/secrets" ]] &&
+    [[ -n "$(find "$TARGET_DIR/secrets" -type l -print -quit)" ]]; then
+    die 'secrets must not contain symlinks'
+  fi
+}
+
+install_prerequisites() {
+  local -a packages=()
+
+  command -v git >/dev/null 2>&1 || packages+=(git)
+  command -v flock >/dev/null 2>&1 || packages+=(util-linux)
+  [[ -r /etc/ssl/certs/ca-certificates.crt ]] || packages+=(ca-certificates)
+  ((${#packages[@]} == 0)) && return
+  command -v apt-get >/dev/null 2>&1 || die 'apt-get is required to install prerequisites'
+  apt-get update
+  env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+  hash -r
+}
+
+acquire_lock() {
+  local lock_dir="${LOCK_FILE%/*}"
+
+  if [[ "$TEST_MODE" == '1' ]]; then
+    mkdir -p "$lock_dir"
+  else
+    [[ ! -L "$lock_dir" ]] || die 'installer lock directory must not be a symlink'
+    if [[ ! -e "$lock_dir" ]]; then
+      mkdir -m 0700 "$lock_dir" || die 'cannot create installer lock directory'
+    fi
+    [[ -d "$lock_dir" && "$(stat -c '%u:%a' "$lock_dir")" == '0:700' ]] ||
+      die 'installer lock directory must be root-owned with mode 700'
+    [[ ! -L "$LOCK_FILE" ]] || die 'installer lock file must not be a symlink'
+  fi
+  exec {INSTALL_LOCK_FD}>"$LOCK_FILE"
+  flock -n "$INSTALL_LOCK_FD" || die 'another Community Club installation is running'
+}
+
+git_staging() {
+  env -i PATH="$EXEC_PATH" HOME=/root LANG=C LC_ALL=C GIT_TERMINAL_PROMPT=0 \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    git -c core.hooksPath=/dev/null -C "$WORK_DIR/source" "$@"
+}
+
+prepare_staging() {
+  local head
+
+  WORK_DIR="$(mktemp -d "${TARGET_DIR%/*}/.community-club-installer.XXXXXX")"
+  mkdir "$WORK_DIR/source"
+  git_staging init --quiet --template=
+  git_staging remote add origin "$REPOSITORY"
+  git_staging fetch --depth=1 origin "$COMMIT"
+  git_staging checkout --detach "$COMMIT"
+  head="$(git_staging rev-parse --verify HEAD)"
+  [[ "$head" == "$COMMIT" ]] || die 'staged checkout does not match the pinned commit'
+  [[ -f "$WORK_DIR/source/scripts/server-bootstrap.sh" ]] ||
+    die 'server bootstrap is missing from the pinned checkout'
+}
+
+replace_source() {
+  local artifact marker="$TARGET_DIR/.community-club-installer"
+
+  if [[ ! -e "$TARGET_DIR" ]]; then
+    mkdir -m 0700 "$TARGET_DIR"
+  fi
+  if [[ ! -e "$marker" ]]; then
+    printf '%s\n' "$MARKER_VALUE" >"$marker"
+    chmod 0600 "$marker"
+  fi
+  for artifact in .env secrets garage.toml; do
+    if [[ -e "$TARGET_DIR/$artifact" ]]; then
+      rm -rf -- "$WORK_DIR/source/$artifact"
+    fi
+  done
+  rm -rf -- "$WORK_DIR/source/.community-club-installer"
+  find "$TARGET_DIR" -mindepth 1 -maxdepth 1 \
+    ! -name '.env' ! -name 'secrets' ! -name 'garage.toml' \
+    ! -name '.community-club-installer' \
+    -exec rm -rf -- {} +
+  cp -a "$WORK_DIR/source/." "$TARGET_DIR/"
+  rm -rf "$TARGET_DIR/.git"
+  chmod go-w "$TARGET_DIR"
+  chmod 0600 "$marker"
+}
+
+run_bootstrap() {
+  local status
+  local scripts="$TARGET_DIR/scripts"
+  local bootstrap="$TARGET_DIR/scripts/server-bootstrap.sh"
+
+  if [[ ! -d "$scripts" ]] || ! is_root_safe "$scripts"; then
+    die 'bootstrap directory is not root-safe'
+  fi
+  if [[ ! -f "$bootstrap" ]] || ! is_root_safe "$bootstrap"; then
+    die 'server bootstrap is not root-safe'
+  fi
+
+  if env -i PATH="$EXEC_PATH" HOME=/root LANG=C LC_ALL=C \
+    DOMAIN="$DOMAIN" ADMIN_EMAIL="$ADMIN_EMAIL" \
+    bash "$bootstrap"; then
+    return 0
+  else
+    status=$?
+    return "$status"
+  fi
+}
+
+cleanup() {
+  if [[ -n "$WORK_DIR" ]]; then
+    rm -rf -- "$WORK_DIR" || true
+  fi
+}
+
+main() {
+  local status
+
+  umask 077
+  PATH="$EXEC_PATH"
+  export PATH
+  validate_inputs
+  validate_host
+  validate_target
+  install_prerequisites
+  acquire_lock
+  validate_target
+  trap cleanup EXIT
+  prepare_staging
+  replace_source
+  if run_bootstrap; then
+    status=0
+  else
+    status=$?
+  fi
+  return "$status"
+}
+
+{
+  main "$@"
+}
