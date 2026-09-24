@@ -106,7 +106,7 @@ validate_target() {
   local artifact
 
   [[ ! -L "$TARGET_DIR" ]] || die "target must not be a symlink: $TARGET_DIR"
-  [[ -e "$TARGET_DIR" ]] || return
+  [[ -e "$TARGET_DIR" ]] || return 0
   [[ -d "$TARGET_DIR" ]] || die "target is not a directory: $TARGET_DIR"
   is_root_safe "$TARGET_DIR" || die 'target must be root-owned without group/world write access'
   target_is_empty && return

@@ -51,6 +51,20 @@ test_unrelated_non_empty_target_is_refused() {
     assert_file_contains "$TARGET_DIR/unrelated.txt" "must survive"
 }
 
+test_missing_target_is_created_and_installed() {
+  # Given: a clean VPS where the application target does not exist yet.
+  write_bootstrap_double
+  rmdir "$TARGET_DIR"
+
+  # When: the installer validates and prepares the fresh target.
+  invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
+
+  # Then: installation continues and creates the managed target.
+  assert_success &&
+    assert_file_contains "$BOOTSTRAP_LOG" "DOMAIN=$VALID_DOMAIN" &&
+    assert_file_contains "$TARGET_DIR/.community-club-installer" "$INSTALLER_MARKER"
+}
+
 test_symlink_target_is_refused() {
   # Given: the configured target path is a symlink to another directory.
   write_bootstrap_double
@@ -166,6 +180,7 @@ TESTS+=(
   "fixed source ignores target Git|test_source_is_fixed_and_target_git_is_ignored"
   "dirty old worktree is replaced without Git inspection|test_dirty_old_worktree_is_replaced_without_git_inspection"
   "unrelated non-empty target is refused|test_unrelated_non_empty_target_is_refused"
+  "missing target is created and installed|test_missing_target_is_created_and_installed"
   "symlink target is refused|test_symlink_target_is_refused"
   "runtime artifacts survive replacement|test_persistent_artifacts_survive_source_replacement"
   "symlink artifact is refused|test_symlink_artifact_is_refused"
