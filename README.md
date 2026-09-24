@@ -41,7 +41,7 @@ bootstrap и сохраняется в:
 ## Маршруты
 
 - `GET /club` — Bash-установщик с `Content-Type: text/plain`.
-- `GET /artifacts/community-club-1ac31045e815d5b12569b34cbeaf53b97a7e81d0.tar`
+- `GET /artifacts/community-club-eba5585bf7651447ebd6f93ce0ddfb259ad49983.tar`
   — неизменяемый проверенный архив исходников.
 - `GET /health` — JSON состояния сервиса и распространяемый commit.
 

@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-readonly COMMIT='1ac31045e815d5b12569b34cbeaf53b97a7e81d0'
-readonly EXPECTED_SHA256='8a8c3da4f4e04a81abd3f22a7fcccd8a10fdbf34a0bb830654d92fe092b1de9d'
+readonly COMMIT='eba5585bf7651447ebd6f93ce0ddfb259ad49983'
+readonly EXPECTED_SHA256='655340deb1ffddb8aa6094e378fe38ed2244e678b0608ccf5cc068cc8a33ef7e'
 readonly EXPECTED_SIZE='12206080'
 readonly PREFIX="community-club-$COMMIT/"
 readonly SOURCE_REPOSITORY="${1:-}"
