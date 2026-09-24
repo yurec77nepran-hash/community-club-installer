@@ -9,7 +9,7 @@ Community Club. Сервис не является частью репозито
 ## Публичные маршруты
 
 - `GET /club` — выдача Bash-установщика с Content-Type `text/plain`.
-- `GET /artifacts/community-club-eba5585bf7651447ebd6f93ce0ddfb259ad49983.tar`
+- `GET /artifacts/community-club-02e82f85ebcd9d0e7cb757f0906aea434a1b84b3.tar`
   — выдача единственного неизменяемого tar-архива исходников.
 - `GET /health` — endpoint проверки доступности; успешный ответ означает, что
   сервис может принимать запросы.
@@ -21,10 +21,10 @@ Community Club. Сервис не является частью репозито
 
 Сервис использует только значения из `config/source.json`:
 
-- `commit`: `eba5585bf7651447ebd6f93ce0ddfb259ad49983`.
+- `commit`: `02e82f85ebcd9d0e7cb757f0906aea434a1b84b3`.
 - `archiveUrl`: HTTPS URL, содержащий полный commit;
-- `sha256`: `655340deb1ffddb8aa6094e378fe38ed2244e678b0608ccf5cc068cc8a33ef7e`;
-- `size`: `12206080` bytes.
+- `sha256`: `6d695785f157f6b1f0e73cdb11322e6ff800a33957befe4a3d36f4ec6e976f4d`;
+- `size`: `12216320` bytes.
 
 Эти значения являются серверной конфигурацией и не принимаются из query,
 form-data, JSON body, headers или иных данных публичного вызывающего. Публичная

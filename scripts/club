@@ -2,10 +2,10 @@
 
 set -euo pipefail
 
-readonly COMMIT='eba5585bf7651447ebd6f93ce0ddfb259ad49983'
-readonly ARCHIVE_URL='https://shablon-clud.nepran-yuri.ru/artifacts/community-club-eba5585bf7651447ebd6f93ce0ddfb259ad49983.tar'
-readonly ARCHIVE_SHA256='655340deb1ffddb8aa6094e378fe38ed2244e678b0608ccf5cc068cc8a33ef7e'
-readonly ARCHIVE_SIZE='12206080'
+readonly COMMIT='02e82f85ebcd9d0e7cb757f0906aea434a1b84b3'
+readonly ARCHIVE_URL='https://shablon-clud.nepran-yuri.ru/artifacts/community-club-02e82f85ebcd9d0e7cb757f0906aea434a1b84b3.tar'
+readonly ARCHIVE_SHA256='6d695785f157f6b1f0e73cdb11322e6ff800a33957befe4a3d36f4ec6e976f4d'
+readonly ARCHIVE_SIZE='12216320'
 readonly MARKER_VALUE='community-club-installer-v1'
 readonly PRODUCTION_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 readonly TEST_MODE="${CLUB_INSTALLER_TEST_MODE:-0}"

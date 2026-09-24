@@ -25,11 +25,11 @@ curl -fsS https://shablon-clud.nepran-yuri.ru/club | bash -n
   archive="$(mktemp)"
   trap 'rm -f "$archive"' EXIT
   curl --disable --fail --silent --show-error --proto '=https' \
-    --max-filesize '12206080' --output "$archive" \
-    https://shablon-clud.nepran-yuri.ru/artifacts/community-club-eba5585bf7651447ebd6f93ce0ddfb259ad49983.tar
-  [[ "$(stat -c %s "$archive")" == '12206080' ]]
+    --max-filesize '12216320' --output "$archive" \
+    https://shablon-clud.nepran-yuri.ru/artifacts/community-club-02e82f85ebcd9d0e7cb757f0906aea434a1b84b3.tar
+  [[ "$(stat -c %s "$archive")" == '12216320' ]]
   printf '%s  %s\n' \
-    '655340deb1ffddb8aa6094e378fe38ed2244e678b0608ccf5cc068cc8a33ef7e' \
+    '6d695785f157f6b1f0e73cdb11322e6ff800a33957befe4a3d36f4ec6e976f4d' \
     "$archive" | sha256sum --check --status
   rm -f "$archive"
   trap - EXIT

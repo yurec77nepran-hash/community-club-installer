@@ -3,9 +3,9 @@
 PROJECT_ROOT="$(cd "$TESTS_ROOT/.." && pwd)"
 readonly PROJECT_ROOT
 readonly INSTALLER="$PROJECT_ROOT/scripts/club"
-readonly EXPECTED_COMMIT="eba5585bf7651447ebd6f93ce0ddfb259ad49983"
-readonly EXPECTED_ARCHIVE_SHA256="655340deb1ffddb8aa6094e378fe38ed2244e678b0608ccf5cc068cc8a33ef7e"
-readonly EXPECTED_ARCHIVE_SIZE="12206080"
+readonly EXPECTED_COMMIT="02e82f85ebcd9d0e7cb757f0906aea434a1b84b3"
+readonly EXPECTED_ARCHIVE_SHA256="6d695785f157f6b1f0e73cdb11322e6ff800a33957befe4a3d36f4ec6e976f4d"
+readonly EXPECTED_ARCHIVE_SIZE="12216320"
 readonly EXPECTED_ARCHIVE_PATH="/artifacts/community-club-$EXPECTED_COMMIT.tar"
 readonly EXPECTED_ARCHIVE_URL="https://shablon-clud.nepran-yuri.ru$EXPECTED_ARCHIVE_PATH"
 readonly INSTALLER_MARKER="community-club-installer-v1"
