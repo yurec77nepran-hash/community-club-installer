@@ -5,8 +5,8 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PROJECT_ROOT
 readonly SOURCE_REPOSITORY="${COMMUNITY_CLUB_SOURCE_REPOSITORY:-$PROJECT_ROOT/../community-club-source}"
-readonly EXPECTED_COMMIT="02e82f85ebcd9d0e7cb757f0906aea434a1b84b3"
-readonly EXPECTED_SHA256="6d695785f157f6b1f0e73cdb11322e6ff800a33957befe4a3d36f4ec6e976f4d"
+readonly EXPECTED_COMMIT="ca80b6c49965c2c1204ad37a825ba6ffe198e0b8"
+readonly EXPECTED_SHA256="5bf9f6dd5cfa48a566f1e74e05956e23814dae166b6964e4a0f13d72eb5eeb7d"
 readonly EXPECTED_SIZE="12216320"
 readonly ARTIFACT="$PROJECT_ROOT/artifacts/community-club-$EXPECTED_COMMIT.tar"
 TEMP_DIR="$(mktemp -d)"

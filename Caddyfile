@@ -11,7 +11,7 @@
 		file_server
 	}
 
-	handle /artifacts/community-club-02e82f85ebcd9d0e7cb757f0906aea434a1b84b3.tar {
+	handle /artifacts/community-club-ca80b6c49965c2c1204ad37a825ba6ffe198e0b8.tar {
 		header Content-Type "application/x-tar"
 		header Cache-Control "public, max-age=31536000, immutable"
 		header X-Content-Type-Options "nosniff"
@@ -21,7 +21,7 @@
 
 	handle /health {
 		header Content-Type "application/json; charset=utf-8"
-		respond "{\"service\":\"community-club-installer\",\"commit\":\"02e82f85ebcd9d0e7cb757f0906aea434a1b84b3\"}" 200
+		respond "{\"service\":\"community-club-installer\",\"commit\":\"ca80b6c49965c2c1204ad37a825ba6ffe198e0b8\"}" 200
 	}
 
 	handle {

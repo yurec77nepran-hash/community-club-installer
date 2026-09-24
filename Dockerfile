@@ -9,7 +9,7 @@ RUN setcap -r /usr/bin/caddy \
 
 COPY --chmod=0444 Caddyfile /etc/caddy/Caddyfile
 COPY --chmod=0444 scripts/club /srv/club
-COPY --chmod=0444 artifacts/community-club-02e82f85ebcd9d0e7cb757f0906aea434a1b84b3.tar /srv/artifacts/community-club-02e82f85ebcd9d0e7cb757f0906aea434a1b84b3.tar
+COPY --chmod=0444 artifacts/community-club-ca80b6c49965c2c1204ad37a825ba6ffe198e0b8.tar /srv/artifacts/community-club-ca80b6c49965c2c1204ad37a825ba6ffe198e0b8.tar
 
 USER caddy
 

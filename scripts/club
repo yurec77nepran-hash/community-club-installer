@@ -2,15 +2,16 @@
 
 set -euo pipefail
 
-readonly COMMIT='02e82f85ebcd9d0e7cb757f0906aea434a1b84b3'
-readonly ARCHIVE_URL='https://shablon-clud.nepran-yuri.ru/artifacts/community-club-02e82f85ebcd9d0e7cb757f0906aea434a1b84b3.tar'
-readonly ARCHIVE_SHA256='6d695785f157f6b1f0e73cdb11322e6ff800a33957befe4a3d36f4ec6e976f4d'
+readonly COMMIT='ca80b6c49965c2c1204ad37a825ba6ffe198e0b8'
+readonly ARCHIVE_URL='https://shablon-clud.nepran-yuri.ru/artifacts/community-club-ca80b6c49965c2c1204ad37a825ba6ffe198e0b8.tar'
+readonly ARCHIVE_SHA256='5bf9f6dd5cfa48a566f1e74e05956e23814dae166b6964e4a0f13d72eb5eeb7d'
 readonly ARCHIVE_SIZE='12216320'
 readonly MARKER_VALUE='community-club-installer-v1'
 readonly PRODUCTION_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 readonly TEST_MODE="${CLUB_INSTALLER_TEST_MODE:-0}"
 readonly DOMAIN="${DOMAIN:-}"
 readonly ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+readonly APT_LOCK_TIMEOUT="${CLUB_APT_LOCK_TIMEOUT:-300}"
 
 if [[ "$TEST_MODE" == '1' ]]; then
   readonly TARGET_DIR="${CLUB_INSTALLER_TEST_TARGET_DIR:-/opt/community-club}"
@@ -53,6 +54,8 @@ is_domain() {
 validate_inputs() {
   local email_domain
 
+  [[ "$APT_LOCK_TIMEOUT" =~ ^[1-9][0-9]*$ ]] ||
+    die 'CLUB_APT_LOCK_TIMEOUT must be a positive integer'
   [[ -n "$DOMAIN" ]] || die 'DOMAIN is required'
   is_domain "$DOMAIN" || die 'DOMAIN must be a valid DNS hostname'
   [[ "$ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] ||
@@ -135,16 +138,22 @@ validate_target() {
 
 install_prerequisites() {
   local -a packages=()
+  local -a apt_options=(-o "DPkg::Lock::Timeout=$APT_LOCK_TIMEOUT")
 
-  command -v curl >/dev/null 2>&1 || packages+=(curl)
+  if [[ "$TEST_MODE" == '1' && "${CLUB_INSTALLER_TEST_FORCE_MISSING_CURL:-0}" == '1' ]]; then
+    packages+=(curl)
+  else
+    command -v curl >/dev/null 2>&1 || packages+=(curl)
+  fi
   command -v sha256sum >/dev/null 2>&1 || packages+=(coreutils)
   command -v tar >/dev/null 2>&1 || packages+=(tar)
   command -v flock >/dev/null 2>&1 || packages+=(util-linux)
   [[ -r /etc/ssl/certs/ca-certificates.crt ]] || packages+=(ca-certificates)
   ((${#packages[@]} == 0)) && return
   command -v apt-get >/dev/null 2>&1 || die 'apt-get is required to install prerequisites'
-  apt-get update
-  env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+  apt-get "${apt_options[@]}" update
+  env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y \
+    --no-install-recommends "${packages[@]}"
   hash -r
 }
 

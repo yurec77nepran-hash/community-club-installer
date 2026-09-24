@@ -20,6 +20,8 @@ declare -a TESTS=()
 source "$TESTS_ROOT/cases/input-validation.sh"
 # shellcheck source=tests/cases/host-requirements.sh
 source "$TESTS_ROOT/cases/host-requirements.sh"
+# shellcheck source=tests/cases/prerequisites-contract.sh
+source "$TESTS_ROOT/cases/prerequisites-contract.sh"
 # shellcheck source=tests/cases/repository-safety.sh
 source "$TESTS_ROOT/cases/repository-safety.sh"
 # shellcheck source=tests/cases/filesystem-hardening.sh
