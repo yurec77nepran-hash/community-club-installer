@@ -6,8 +6,10 @@ SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SCRIPT_ROOT
 readonly COMPOSE_FILE="$SCRIPT_ROOT/compose.yaml"
 readonly SERVICE_NAME="community-club-installer"
-readonly EXPECTED_REPOSITORY="https://github.com/yurec77nepran-hash/community-club-source.git"
 readonly EXPECTED_SHA="1ac31045e815d5b12569b34cbeaf53b97a7e81d0"
+readonly EXPECTED_ARCHIVE_SHA256="8a8c3da4f4e04a81abd3f22a7fcccd8a10fdbf34a0bb830654d92fe092b1de9d"
+readonly EXPECTED_ARCHIVE_SIZE="12206080"
+readonly EXPECTED_ARCHIVE_PATH="/artifacts/community-club-$EXPECTED_SHA.tar"
 readonly PROJECT_NAME="community-club-installer-smoke-${USER:-unknown}-$$"
 readonly HEALTH_TIMEOUT="${CONTAINER_SMOKE_TIMEOUT:-30}"
 readonly HTTP_PORT="${CONTAINER_SMOKE_HTTP_PORT:-0}"
@@ -78,6 +80,8 @@ health_headers="$TEMP_DIR/health.headers"
 health_body="$TEMP_DIR/health.json"
 club_headers="$TEMP_DIR/club.headers"
 club_body="$TEMP_DIR/club"
+archive_body="$TEMP_DIR/source.tar"
+archive_headers="$TEMP_DIR/source.headers"
 
 curl --fail --silent --show-error --dump-header "$health_headers" \
   "$base_url/health" >"$health_body"
@@ -94,13 +98,31 @@ grep -iq '^content-type: text/plain' "$club_headers"
 grep -iq '^x-content-type-options: nosniff' "$club_headers"
 bash -n "$club_body"
 grep -Fqx 'set -euo pipefail' <(grep -E '^set -euo pipefail$' "$club_body")
-grep -Fqx "readonly REPOSITORY='$EXPECTED_REPOSITORY'" "$club_body"
 grep -Fqx "readonly COMMIT='$EXPECTED_SHA'" "$club_body"
+grep -Fqx "readonly ARCHIVE_SHA256='$EXPECTED_ARCHIVE_SHA256'" "$club_body"
+grep -Fqx "readonly ARCHIVE_SIZE='$EXPECTED_ARCHIVE_SIZE'" "$club_body"
+
+curl --fail --silent --show-error --dump-header "$archive_headers" \
+  "$base_url$EXPECTED_ARCHIVE_PATH" >"$archive_body"
+grep -iq '^content-type: application/x-tar' "$archive_headers"
+grep -iq '^cache-control: public, max-age=31536000, immutable' "$archive_headers"
+grep -iq '^x-content-type-options: nosniff' "$archive_headers"
+grep -iq "^content-length: $EXPECTED_ARCHIVE_SIZE"$'\r$' "$archive_headers"
+[[ "$(stat -c %s "$archive_body")" == "$EXPECTED_ARCHIVE_SIZE" ]]
+printf '%s  %s\n' "$EXPECTED_ARCHIVE_SHA256" "$archive_body" | sha256sum --check --status
+tar -tf "$archive_body" >/dev/null
 
 unknown_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   "$base_url/unknown")"
 [[ "$unknown_status" == '404' ]] || {
   printf 'Unknown path returned HTTP %s instead of 404\n' "$unknown_status" >&2
+  exit 1
+}
+
+wrong_archive_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "$base_url/artifacts/community-club-0000000000000000000000000000000000000000.tar")"
+[[ "$wrong_archive_status" == '404' ]] || {
+  printf 'Unpinned archive path returned HTTP %s instead of 404\n' "$wrong_archive_status" >&2
   exit 1
 }
 

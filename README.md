@@ -1,7 +1,8 @@
 # Community Club Installer
 
-Независимый публичный сервис установки Community Club. Контейнер только отдаёт
-Bash-скрипт; сама установка выполняется на целевом Ubuntu/Debian VPS.
+Независимый публичный сервис установки Community Club. Контейнер отдаёт
+Bash-скрипт и неизменяемый tar-архив исходников; сама установка выполняется на
+целевом Ubuntu/Debian VPS.
 
 Публичный HTTPS завершается в системном Caddy хоста. Контейнер принимает только
 HTTP на внутреннем порту `8080`, а Compose публикует его исключительно на
@@ -21,9 +22,11 @@ curl -fsSL https://shablon-clud.nepran-yuri.ru/club |
 - `INSTALL_EMAIL` не поддерживается.
 - Проверок покупки, лицензии или доступа нет.
 
-Установщик получает зафиксированный commit приложения в новый приватный staging,
-проверяет его SHA, заменяет только исходный код в `/opt/community-club` и запускает
-штатный `scripts/server-bootstrap.sh` в очищенном окружении. Существующие `.env`,
+Установщик скачивает HTTPS-архив зафиксированного commit в новый приватный
+staging, проверяет точный размер и SHA-256 до распаковки, заменяет только исходный
+код в `/opt/community-club` и запускает штатный `scripts/server-bootstrap.sh` в
+очищенном окружении. Git и доступ к приватному репозиторию на целевом VPS не
+требуются. Существующие `.env`,
 `secrets/` и `garage.toml` сохраняются. Пароль первого владельца выводится
 bootstrap и сохраняется в:
 
@@ -38,12 +41,15 @@ bootstrap и сохраняется в:
 ## Маршруты
 
 - `GET /club` — Bash-установщик с `Content-Type: text/plain`.
+- `GET /artifacts/community-club-1ac31045e815d5b12569b34cbeaf53b97a7e81d0.tar`
+  — неизменяемый проверенный архив исходников.
 - `GET /health` — JSON состояния сервиса и распространяемый commit.
 
 ## Локальная проверка
 
 ```bash
 bash tests/installer.test.sh
+bash tests/release-archive.test.sh
 docker compose config
 bash tests/container-smoke.sh
 ```

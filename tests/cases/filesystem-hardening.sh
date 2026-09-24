@@ -9,7 +9,7 @@ test_non_root_owned_target_is_refused() {
   # When: the root installer validates the existing target.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it refuses the target before Git or bootstrap execution.
+  # Then: it refuses the target before source download or bootstrap execution.
   assert_failure && assert_file_empty "$COMMAND_LOG" && [[ ! -e "$BOOTSTRAP_LOG" ]]
 }
 
@@ -22,7 +22,7 @@ test_group_writable_target_is_refused() {
   # When: the installer validates target permissions.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it refuses the unsafe target before Git.
+  # Then: it refuses the unsafe target before source download.
   assert_failure && assert_file_empty "$COMMAND_LOG"
 }
 
@@ -35,7 +35,7 @@ test_marker_must_be_root_owned_mode_0600() {
   # When: the installer validates the marker as its trust signal.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it refuses the marker before Git.
+  # Then: it refuses the marker before source download.
   assert_failure && assert_file_empty "$COMMAND_LOG"
 }
 
@@ -51,32 +51,30 @@ test_bootstrap_group_write_is_refused() {
   assert_failure && [[ ! -e "$BOOTSTRAP_LOG" ]]
 }
 
-test_bootstrap_non_root_owner_is_refused() {
-  # Given: staged source whose bootstrap is not root-owned.
+test_bootstrap_symlink_is_refused() {
+  # Given: an authenticated archive whose bootstrap entry is a symlink.
   write_bootstrap_double
-  touch "$TEST_ROOT/unsafe-bootstrap-owner"
+  touch "$TEST_ROOT/symlink-bootstrap"
 
-  # When: the installer re-checks bootstrap immediately before execution.
+  # When: the installer checks extracted bootstrap type immediately before replacement.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: root never executes the foreign-owned bootstrap.
+  # Then: root never follows or executes the symlink bootstrap.
   assert_failure && [[ ! -e "$BOOTSTRAP_LOG" ]]
 }
 
-test_fresh_install_receives_staged_runtime_defaults() {
-  # Given: an empty root-owned target and staged runtime defaults.
+test_fresh_install_receives_tracked_garage_default() {
+  # Given: an empty root-owned target and the tracked Garage default.
   write_bootstrap_double
 
   # When: a fresh installation completes.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: staged defaults are installed but staged marker content is rejected.
+  # Then: Garage and generated marker exist before real bootstrap creates runtime state.
   assert_success &&
-    assert_file_contains "$TARGET_DIR/.env" "staged-env" &&
     assert_file_contains "$TARGET_DIR/garage.toml" "staged-garage" &&
-    assert_file_contains "$TARGET_DIR/secrets/staged-key" "staged-secret" &&
     assert_file_contains "$TARGET_DIR/.community-club-installer" "$INSTALLER_MARKER" &&
-    assert_file_excludes "$TARGET_DIR/.community-club-installer" "untrusted-staged-marker"
+    [[ ! -e "$TARGET_DIR/.env" && ! -e "$TARGET_DIR/secrets" ]]
 }
 
 test_copy_failure_preserves_marker_and_runtime_state() {
@@ -124,8 +122,8 @@ TESTS+=(
   "group-writable target is refused|test_group_writable_target_is_refused"
   "marker requires root ownership and mode 0600|test_marker_must_be_root_owned_mode_0600"
   "writable bootstrap is refused|test_bootstrap_group_write_is_refused"
-  "foreign-owned bootstrap is refused|test_bootstrap_non_root_owner_is_refused"
-  "fresh install receives staged runtime defaults|test_fresh_install_receives_staged_runtime_defaults"
+  "symlink bootstrap is refused|test_bootstrap_symlink_is_refused"
+  "fresh install receives tracked Garage default|test_fresh_install_receives_tracked_garage_default"
   "copy failure preserves retry state|test_copy_failure_preserves_marker_and_runtime_state"
   "retry after copy failure succeeds|test_retry_after_copy_failure_succeeds"
 )

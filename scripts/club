@@ -2,8 +2,10 @@
 
 set -euo pipefail
 
-readonly REPOSITORY='https://github.com/yurec77nepran-hash/community-club-source.git'
 readonly COMMIT='1ac31045e815d5b12569b34cbeaf53b97a7e81d0'
+readonly ARCHIVE_URL='https://shablon-clud.nepran-yuri.ru/artifacts/community-club-1ac31045e815d5b12569b34cbeaf53b97a7e81d0.tar'
+readonly ARCHIVE_SHA256='8a8c3da4f4e04a81abd3f22a7fcccd8a10fdbf34a0bb830654d92fe092b1de9d'
+readonly ARCHIVE_SIZE='12206080'
 readonly MARKER_VALUE='community-club-installer-v1'
 readonly PRODUCTION_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 readonly TEST_MODE="${CLUB_INSTALLER_TEST_MODE:-0}"
@@ -16,12 +18,16 @@ if [[ "$TEST_MODE" == '1' ]]; then
   readonly EFFECTIVE_EUID="${CLUB_INSTALLER_TEST_EUID:-$EUID}"
   readonly LOCK_FILE="${CLUB_INSTALLER_TEST_LOCK_FILE:-/run/lock/community-club-installer.lock}"
   readonly EXEC_PATH="$PATH"
+  readonly VERIFIED_ARCHIVE_SHA256="${CLUB_INSTALLER_TEST_ARCHIVE_SHA256:-$ARCHIVE_SHA256}"
+  readonly VERIFIED_ARCHIVE_SIZE="${CLUB_INSTALLER_TEST_ARCHIVE_SIZE:-$ARCHIVE_SIZE}"
 else
   readonly TARGET_DIR='/opt/community-club'
   readonly OS_RELEASE='/etc/os-release'
   readonly EFFECTIVE_EUID="$EUID"
   readonly LOCK_FILE='/run/lock/community-club-installer/installer.lock'
   readonly EXEC_PATH="$PRODUCTION_PATH"
+  readonly VERIFIED_ARCHIVE_SHA256="$ARCHIVE_SHA256"
+  readonly VERIFIED_ARCHIVE_SIZE="$ARCHIVE_SIZE"
 fi
 
 WORK_DIR=''
@@ -130,7 +136,9 @@ validate_target() {
 install_prerequisites() {
   local -a packages=()
 
-  command -v git >/dev/null 2>&1 || packages+=(git)
+  command -v curl >/dev/null 2>&1 || packages+=(curl)
+  command -v sha256sum >/dev/null 2>&1 || packages+=(coreutils)
+  command -v tar >/dev/null 2>&1 || packages+=(tar)
   command -v flock >/dev/null 2>&1 || packages+=(util-linux)
   [[ -r /etc/ssl/certs/ca-certificates.crt ]] || packages+=(ca-certificates)
   ((${#packages[@]} == 0)) && return
@@ -158,25 +166,33 @@ acquire_lock() {
   flock -n "$INSTALL_LOCK_FD" || die 'another Community Club installation is running'
 }
 
-git_staging() {
-  env -i PATH="$EXEC_PATH" HOME=/root LANG=C LC_ALL=C GIT_TERMINAL_PROMPT=0 \
-    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-    git -c core.hooksPath=/dev/null -C "$WORK_DIR/source" "$@"
-}
-
 prepare_staging() {
-  local head
+  local actual_size archive
+  local scripts bootstrap
 
   WORK_DIR="$(mktemp -d "${TARGET_DIR%/*}/.community-club-installer.XXXXXX")"
+  archive="$WORK_DIR/source.tar"
   mkdir "$WORK_DIR/source"
-  git_staging init --quiet --template=
-  git_staging remote add origin "$REPOSITORY"
-  git_staging fetch --depth=1 origin "$COMMIT"
-  git_staging checkout --detach "$COMMIT"
-  head="$(git_staging rev-parse --verify HEAD)"
-  [[ "$head" == "$COMMIT" ]] || die 'staged checkout does not match the pinned commit'
-  [[ -f "$WORK_DIR/source/scripts/server-bootstrap.sh" ]] ||
-    die 'server bootstrap is missing from the pinned checkout'
+  env -i PATH="$EXEC_PATH" HOME=/root LANG=C LC_ALL=C \
+    curl --disable --fail --silent --show-error --proto '=https' \
+    --max-filesize "$VERIFIED_ARCHIVE_SIZE" --output "$archive" "$ARCHIVE_URL"
+  actual_size="$(stat -c %s "$archive")"
+  [[ "$actual_size" == "$VERIFIED_ARCHIVE_SIZE" ]] || die 'source archive size mismatch'
+  printf '%s  %s\n' "$VERIFIED_ARCHIVE_SHA256" "$archive" |
+    sha256sum --check --status || die 'source archive SHA-256 mismatch'
+  env -i PATH="$EXEC_PATH" HOME=/root LANG=C LC_ALL=C \
+    tar --extract --file="$archive" --directory="$WORK_DIR/source" \
+    --strip-components=1 --no-same-owner --no-same-permissions
+
+  scripts="$WORK_DIR/source/scripts"
+  bootstrap="$scripts/server-bootstrap.sh"
+  if [[ ! -d "$scripts" ]] || ! is_root_safe "$scripts"; then
+    die "staged scripts directory is not root-safe for $COMMIT"
+  fi
+  if [[ ! -f "$bootstrap" || -L "$bootstrap" || ! -x "$bootstrap" ]] ||
+    ! is_root_safe "$bootstrap"; then
+    die 'staged server bootstrap is not a root-safe executable regular file'
+  fi
 }
 
 replace_source() {
@@ -200,7 +216,6 @@ replace_source() {
     ! -name '.community-club-installer' \
     -exec rm -rf -- {} +
   cp -a "$WORK_DIR/source/." "$TARGET_DIR/"
-  rm -rf "$TARGET_DIR/.git"
   chmod go-w "$TARGET_DIR"
   chmod 0600 "$marker"
 }
@@ -247,6 +262,7 @@ main() {
   validate_target
   trap cleanup EXIT
   prepare_staging
+  validate_target
   replace_source
   if run_bootstrap; then
     status=0

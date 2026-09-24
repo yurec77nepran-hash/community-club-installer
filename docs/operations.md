@@ -19,6 +19,21 @@ docker compose ps
 curl -fsS http://127.0.0.1:3980/health
 curl -fsS https://shablon-clud.nepran-yuri.ru/health
 curl -fsS https://shablon-clud.nepran-yuri.ru/club | bash -n
+
+(
+  set -euo pipefail
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+  curl --disable --fail --silent --show-error --proto '=https' \
+    --max-filesize '12206080' --output "$archive" \
+    https://shablon-clud.nepran-yuri.ru/artifacts/community-club-1ac31045e815d5b12569b34cbeaf53b97a7e81d0.tar
+  [[ "$(stat -c %s "$archive")" == '12206080' ]]
+  printf '%s  %s\n' \
+    '8a8c3da4f4e04a81abd3f22a7fcccd8a10fdbf34a0bb830654d92fe092b1de9d' \
+    "$archive" | sha256sum --check --status
+  rm -f "$archive"
+  trap - EXIT
+)
 ```
 
 Контейнер автоматически перезапускается по политике `unless-stopped`. Он не
@@ -29,15 +44,18 @@ volumes.
 
 Установщик запускается из root-сессии, принимает только `DOMAIN` и
 `ADMIN_EMAIL`, проверяет Ubuntu или Debian-like Linux и получает фиксированный
-commit приложения в новый приватный staging. Git никогда не читает metadata или
-worktree существующего `/opt/community-club`.
+архив commit приложения в новый приватный staging. До распаковки проверяются
+HTTP-успех, точный размер и SHA-256; Git на VPS не нужен и metadata существующего
+`/opt/community-club` не читается.
 
 Непустой target принимается только с marker
 `.community-club-installer`, созданным этим установщиком. При обновлении:
 
 - старый source полностью заменяется содержимым проверенного staging;
 - существующие `.env`, `secrets/`, `garage.toml` и marker не перезаписываются
-  содержимым staging; при fresh install staged runtime defaults устанавливаются;
+  содержимым staging;
+- при fresh install из source устанавливается только tracked `garage.toml`;
+  `.env` и `secrets/` создаёт штатный bootstrap;
 - marker и runtime-состояние сохраняются при ошибке копирования, поэтому запуск
   можно безопасно повторить;
 - target и перечисленные runtime-артефакты не могут быть symlink;

@@ -3,8 +3,11 @@
 PROJECT_ROOT="$(cd "$TESTS_ROOT/.." && pwd)"
 readonly PROJECT_ROOT
 readonly INSTALLER="$PROJECT_ROOT/scripts/club"
-readonly EXPECTED_REPOSITORY="https://github.com/yurec77nepran-hash/community-club-source.git"
 readonly EXPECTED_COMMIT="1ac31045e815d5b12569b34cbeaf53b97a7e81d0"
+readonly EXPECTED_ARCHIVE_SHA256="8a8c3da4f4e04a81abd3f22a7fcccd8a10fdbf34a0bb830654d92fe092b1de9d"
+readonly EXPECTED_ARCHIVE_SIZE="12206080"
+readonly EXPECTED_ARCHIVE_PATH="/artifacts/community-club-$EXPECTED_COMMIT.tar"
+readonly EXPECTED_ARCHIVE_URL="https://shablon-clud.nepran-yuri.ru$EXPECTED_ARCHIVE_PATH"
 readonly INSTALLER_MARKER="community-club-installer-v1"
 readonly VALID_DOMAIN="club.example.com"
 readonly VALID_ADMIN_EMAIL="admin@example.com"
@@ -22,9 +25,9 @@ INSTALLER_OUTPUT=""
 INSTALLER_STATUS=0
 
 setup() {
-  unset CLUB_TEST_EUID INSTALL_EMAIL REPOSITORY_URL COMMIT_SHA
-  unset CLUB_REPOSITORY_URL CLUB_COMMIT_SHA ADMIN_PASSWORD COMPOSE_FILE
-  unset DOCKER_HOST BASH_ENV ENV CDPATH GIT_DIR GIT_WORK_TREE
+  unset CLUB_TEST_EUID INSTALL_EMAIL REPOSITORY_URL COMMIT_SHA ARCHIVE_URL
+  unset CLUB_REPOSITORY_URL CLUB_COMMIT_SHA CLUB_ARCHIVE_URL ADMIN_PASSWORD COMPOSE_FILE
+  unset DOCKER_HOST BASH_ENV ENV CDPATH GIT_DIR GIT_WORK_TREE TAR_OPTIONS
 
   TEST_ROOT="$(mktemp -d)"
   FAKE_BIN="$TEST_ROOT/bin"
@@ -52,45 +55,39 @@ EOF
 }
 
 write_command_doubles() {
-  cat >"$FAKE_BIN/git" <<'EOF'
+  cat >"$FAKE_BIN/curl" <<'EOF'
 #!/usr/bin/env bash
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
-printf 'git|' >>"$root/commands.log"
+printf 'curl|' >>"$root/commands.log"
 printf '%q ' "$@" >>"$root/commands.log"
 printf '\n' >>"$root/commands.log"
 
-checkout=""
+output=""
+max_filesize=""
 previous=""
+[[ "${1:-}" == '--disable' ]] || exit 65
 for argument in "$@"; do
-  if [[ "$previous" == '-C' ]]; then
-    checkout="$argument"
-    break
+  [[ "$argument" != '--location' && "$argument" != '-L' ]] || exit 66
+  if [[ "$previous" == '--output' ]]; then
+    output="$argument"
+  elif [[ "$previous" == '--max-filesize' ]]; then
+    max_filesize="$argument"
   fi
   previous="$argument"
 done
 
-if [[ " $* " == *" init "* ]]; then
-  mkdir -p "$checkout/.git"
-elif [[ " $* " == *" checkout "* ]]; then
-  mkdir -p "$checkout/scripts" "$checkout/secrets"
-  cp "$root/server-bootstrap.sh" "$checkout/scripts/server-bootstrap.sh"
-  chmod +x "$checkout/scripts/server-bootstrap.sh"
-  printf 'staged-env\n' >"$checkout/.env"
-  printf 'staged-garage\n' >"$checkout/garage.toml"
-  printf 'staged-secret\n' >"$checkout/secrets/staged-key"
-  printf 'untrusted-staged-marker\n' >"$checkout/.community-club-installer"
-  if [[ -f "$root/unsafe-bootstrap-mode" ]]; then
-    chmod 0777 "$checkout/scripts/server-bootstrap.sh"
-  fi
-  if [[ -f "$root/unsafe-bootstrap-owner" ]]; then
-    /bin/chown 65534 "$checkout/scripts/server-bootstrap.sh"
-  fi
-elif [[ " $* " == *" rev-parse "*" HEAD "* ]]; then
-  if [[ -f "$root/fake-head" ]]; then
-    cat "$root/fake-head"
-  else
-    printf '%s\n' '1ac31045e815d5b12569b34cbeaf53b97a7e81d0'
+if [[ -f "$root/fail-download" ]]; then
+  exit 22
+fi
+[[ -n "$output" ]] || exit 64
+[[ "$max_filesize" == "$(stat -c %s "$root/source.tar")" ]] || exit 67
+if [[ -f "$root/corrupt-download" ]]; then
+  printf 'corrupt archive\n' >"$output"
+else
+  /bin/cp "$root/source.tar" "$output"
+  if [[ -f "$root/corrupt-same-size-download" ]]; then
+    printf 'X' | dd of="$output" bs=1 seek=0 conv=notrunc status=none
   fi
 fi
 EOF
@@ -120,6 +117,24 @@ EOF
   chmod +x "$FAKE_BIN"/*
 }
 
+build_source_archive() {
+  local archive_root="$TEST_ROOT/archive/community-club-$EXPECTED_COMMIT"
+
+  mkdir -p "$archive_root/scripts"
+  cp "$TEST_ROOT/server-bootstrap.sh" "$archive_root/scripts/server-bootstrap.sh"
+  chmod 0755 "$archive_root/scripts/server-bootstrap.sh"
+  printf 'staged-garage\n' >"$archive_root/garage.toml"
+  if [[ -f "$TEST_ROOT/unsafe-bootstrap-mode" ]]; then
+    chmod 0644 "$archive_root/scripts/server-bootstrap.sh"
+  fi
+  if [[ -f "$TEST_ROOT/symlink-bootstrap" ]]; then
+    rm "$archive_root/scripts/server-bootstrap.sh"
+    ln -s /bin/true "$archive_root/scripts/server-bootstrap.sh"
+  fi
+  env -i PATH=/usr/bin:/bin tar -C "$TEST_ROOT/archive" -cf "$TEST_ROOT/source.tar" \
+    "community-club-$EXPECTED_COMMIT"
+}
+
 write_bootstrap_double() {
   local exit_code="${1:-0}"
 
@@ -143,13 +158,15 @@ mark_existing_target() {
   chmod 0600 "$TARGET_DIR/.community-club-installer"
 }
 
-set_fake_head() {
-  printf '%s\n' "$1" >"$TEST_ROOT/fake-head"
-}
-
 invoke_installer() {
   local domain="$1"
   local admin_email="$2"
+
+  build_source_archive
+  local archive_sha256 archive_size
+  archive_sha256="$(sha256sum "$TEST_ROOT/source.tar")"
+  archive_sha256="${archive_sha256%% *}"
+  archive_size="$(stat -c %s "$TEST_ROOT/source.tar")"
 
   set +e
   INSTALLER_OUTPUT="$({
@@ -170,6 +187,8 @@ invoke_installer() {
     export CLUB_INSTALLER_TEST_EUID="${CLUB_TEST_EUID:-0}"
     export CLUB_INSTALLER_TEST_TARGET_DIR="$TARGET_DIR"
     export CLUB_INSTALLER_TEST_LOCK_FILE="$LOCK_FILE"
+    export CLUB_INSTALLER_TEST_ARCHIVE_SHA256="$archive_sha256"
+    export CLUB_INSTALLER_TEST_ARCHIVE_SIZE="$archive_size"
     "$BASH_BIN" "$INSTALLER"
   } 2>&1)"
   INSTALLER_STATUS=$?

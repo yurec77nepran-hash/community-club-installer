@@ -9,16 +9,18 @@ test_source_is_fixed_and_target_git_is_ignored() {
   printf 'hostile-index\n' >"$TARGET_DIR/.git/index"
   export REPOSITORY_URL="https://attacker.invalid/repository.git"
   export COMMIT_SHA="ffffffffffffffffffffffffffffffffffffffff"
+  export ARCHIVE_URL="https://attacker.invalid/source.tar"
 
   # When: installation refreshes the application source.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: Git uses only fixed coordinates and never addresses the old target.
+  # Then: only the fixed HTTPS archive is downloaded and target Git is ignored.
   assert_success &&
-    assert_file_contains "$COMMAND_LOG" "$EXPECTED_REPOSITORY" &&
-    assert_file_contains "$COMMAND_LOG" "$EXPECTED_COMMIT" &&
+    assert_file_contains "$COMMAND_LOG" "$EXPECTED_ARCHIVE_URL" &&
     assert_file_excludes "$COMMAND_LOG" "$TARGET_DIR" &&
     assert_file_excludes "$COMMAND_LOG" "$REPOSITORY_URL" &&
+    assert_file_excludes "$COMMAND_LOG" "$ARCHIVE_URL" &&
+    assert_file_excludes "$COMMAND_LOG" "git|" &&
     [[ ! -e "$TARGET_DIR/.git/config" ]]
 }
 
@@ -33,7 +35,7 @@ test_dirty_old_worktree_is_replaced_without_git_inspection() {
   # When: installation refreshes from independent trusted staging.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: no Git command addresses old target and its old worktree is replaced.
+  # Then: no command addresses old target and its old worktree is replaced.
   assert_success && assert_file_excludes "$COMMAND_LOG" "$TARGET_DIR" &&
     [[ ! -e "$TARGET_DIR/packages/api/src/app.ts" && ! -e "$TARGET_DIR/.git" ]]
 }
@@ -46,7 +48,7 @@ test_unrelated_non_empty_target_is_refused() {
   # When: installation targets that directory.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it refuses the target without invoking Git or bootstrap.
+  # Then: it refuses the target without downloading source or invoking bootstrap.
   assert_failure && assert_file_empty "$COMMAND_LOG" &&
     assert_file_contains "$TARGET_DIR/unrelated.txt" "must survive"
 }
@@ -113,7 +115,7 @@ test_symlink_artifact_is_refused() {
   # When: installation validates preserved artifacts.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it fails before Git and leaves the external file unchanged.
+  # Then: it fails before source download and leaves the external file unchanged.
   assert_failure && assert_file_empty "$COMMAND_LOG" &&
     assert_file_contains "$TEST_ROOT/outside-env" "outside"
 }
@@ -128,7 +130,7 @@ test_symlink_secrets_directory_is_refused() {
   # When: installation validates preserved artifacts.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it fails before Git without following the secrets symlink.
+  # Then: it fails before source download without following the secrets symlink.
   assert_failure && assert_file_empty "$COMMAND_LOG"
 }
 
@@ -142,7 +144,7 @@ test_symlink_garage_config_is_refused() {
   # When: installation validates preserved artifacts.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it fails before Git and leaves the external config unchanged.
+  # Then: it fails before source download and leaves the external config unchanged.
   assert_failure && assert_file_empty "$COMMAND_LOG" &&
     assert_file_contains "$TEST_ROOT/outside-garage.toml" "outside"
 }
@@ -158,22 +160,76 @@ test_nested_symlink_in_secrets_is_refused() {
   # When: installation recursively validates the secrets artifact.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it fails before Git and leaves the external secret unchanged.
+  # Then: it fails before source download and leaves the external secret unchanged.
   assert_failure && assert_file_empty "$COMMAND_LOG" &&
     assert_file_contains "$TEST_ROOT/outside-secret" "outside"
 }
 
-test_verified_head_mismatch_is_rejected() {
-  # Given: a fresh staging checkout reports a different HEAD.
+test_archive_size_mismatch_is_rejected() {
+  # Given: the HTTPS response body is shorter than the pinned archive size.
   write_bootstrap_double
-  set_fake_head "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  touch "$TEST_ROOT/corrupt-download"
 
-  # When: installation verifies staged HEAD.
+  # When: installation verifies the downloaded bytes.
   invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
 
-  # Then: it fails before replacing the target or invoking bootstrap.
-  assert_failure && assert_file_contains "$COMMAND_LOG" "rev-parse" &&
+  # Then: it fails before extraction, target replacement, or bootstrap.
+  assert_failure && assert_file_contains "$COMMAND_LOG" "$EXPECTED_ARCHIVE_URL" &&
     [[ ! -e "$BOOTSTRAP_LOG" ]]
+}
+
+test_archive_sha256_mismatch_is_rejected() {
+  # Given: the HTTPS response has the pinned size but different bytes.
+  write_bootstrap_double
+  touch "$TEST_ROOT/corrupt-same-size-download"
+
+  # When: installation verifies the downloaded archive digest.
+  invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
+
+  # Then: it fails before target replacement or bootstrap.
+  assert_failure && assert_file_contains "$COMMAND_LOG" "$EXPECTED_ARCHIVE_URL" &&
+    [[ ! -e "$BOOTSTRAP_LOG" ]]
+}
+
+test_archive_download_stays_in_private_staging() {
+  # Given: a valid archive installation on a clean target.
+  write_bootstrap_double
+
+  # When: source acquisition and cleanup complete.
+  invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
+
+  # Then: curl writes below target parent staging, never at filesystem root.
+  assert_success &&
+    assert_file_contains "$COMMAND_LOG" "--output $TEST_ROOT/.community-club-installer." &&
+    assert_file_excludes "$COMMAND_LOG" "--output /source.tar"
+}
+
+test_archive_download_failure_preserves_target() {
+  # Given: a marked target with existing source and an HTTP download failure.
+  write_bootstrap_double
+  mark_existing_target
+  printf 'existing source\n' >"$TARGET_DIR/existing.txt"
+  touch "$TEST_ROOT/fail-download"
+
+  # When: curl cannot download the pinned archive.
+  invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
+
+  # Then: installation fails without replacing target or invoking bootstrap.
+  assert_failure &&
+    assert_file_contains "$TARGET_DIR/existing.txt" "existing source" &&
+    [[ ! -e "$BOOTSTRAP_LOG" ]]
+}
+
+test_tar_ignores_caller_environment_options() {
+  # Given: a caller injects TAR_OPTIONS that would exclude every archive entry.
+  write_bootstrap_double
+  export TAR_OPTIONS='--exclude=*'
+
+  # When: the verified archive is extracted.
+  invoke_installer "$VALID_DOMAIN" "$VALID_ADMIN_EMAIL"
+
+  # Then: sanitized tar execution ignores caller options and installation succeeds.
+  assert_success && assert_file_contains "$BOOTSTRAP_LOG" "DOMAIN=$VALID_DOMAIN"
 }
 
 TESTS+=(
@@ -187,5 +243,9 @@ TESTS+=(
   "symlink secrets directory is refused|test_symlink_secrets_directory_is_refused"
   "symlink Garage config is refused|test_symlink_garage_config_is_refused"
   "nested secrets symlink is refused|test_nested_symlink_in_secrets_is_refused"
-  "verified staged HEAD mismatch is rejected|test_verified_head_mismatch_is_rejected"
+  "archive size mismatch is rejected|test_archive_size_mismatch_is_rejected"
+  "archive SHA-256 mismatch is rejected|test_archive_sha256_mismatch_is_rejected"
+  "archive download stays in private staging|test_archive_download_stays_in_private_staging"
+  "archive download failure preserves target|test_archive_download_failure_preserves_target"
+  "tar ignores caller environment options|test_tar_ignores_caller_environment_options"
 )
